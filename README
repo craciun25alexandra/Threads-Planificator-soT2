@@ -1,0 +1,49 @@
+    Principiul temei se bazeaza pe un scheduler* cu 3 vectori de threaduri si un thread* care retine threadul ce ruleaza.
+Un vector contine toate threadurile(pt usurinta la final cand trebuie asteptate si rulate), al 2 lea este
+sub forma unei cozi, in care se adauga in ordinea prioritatilor, iar in al 3 lea se stocheaza cele care
+sunt blocate(asteapta dupa un eveniment). Pentru a sti ce thread se deblocheaza de functia signal, threadurile
+au un camp "which_ios", la initializare pus -1 (eventurile sunt de la 0 la 255) si actualizat la so_wait.
+La fiecare instructiune(fork, exec, wait, signal) se scade o unitate din cuanta de timp si se replanifica
+in functie de cazurile descrise pt preemptie.
+    =Functii=
+
+so_init - verifica parametrii si ca schedulerului sa nu fi fost initializat, initializeaza structurile schedulerului si
+aloca memorie necesara pt vectori
+
+add_in_queue - pune threadul dat ca parametru in ordine descrescatoare a prioritatii in coada de prioritati
+
+delete_from_prio - sterge primul element din coada de prioritati
+
+so_plan - planifica schedulerul in functie de cazurile in care threadul poate fi preemptat. Mereu cand scheduler->running
+este modificat, cuanta lui este actualizata(cuanta schedulerului). 
+    In cazul in care threadul din running este schimbat cu primul din coada(daca cel din urma avea prioritatea mai mare, sau
+timpul a expirat si avea prioritatea >= cu cel curent), acesta este pus in scheduler->running, sters din lista de prioritati
+si se trezeste(post la sem), iar cel initial este pus inapoi in coada de prioritati. In cazul in care scheduler->running devine
+blocat(status WAITING) sau este terminat(status TERMINATED), se trece la urmatorul thread(primul din coada; se sterge din ea)
+si se trezeste, iar ultimul caz, daca nu s a gasit un thread cu care sa fie preemptat sau nu mai exista altele in coada,
+se trezeste cel curent.
+
+so_exec - consuma o unitate de timp si apeleaza so_plan pt a replanifica schedulerul. Se retine inainte threadul din running
+pentru a da wait pe semaforul sau dupa planificare. Astfel, daca ramane acelasi thread, va avea post in so_plan, iar wait ul din
+exec nu l va incurca, isi va face in continuare executia, iar daca se schimba, postul din so_plan il va determina pe cel nou sa se
+execute si pe cel vechi sa astepte.
+
+start_thread - functie suplimentara care determina contextul in care se va executa noul thread. Acesta are un sem_wait, adica asteapta
+sa fie planificat, apoi se executa prin apelarea handlerul, se marcheaza ca terminat si se apeleaza so_plan pt replanificare.
+
+so_fork - verifica parametrii, aloca o structura de tip thread, initializeaza parametrii(status cu new si which_ios cu -1), il adauga
+in coada cu prioritati, in vectorul cu threaduri si creeaza threadul cu pthread_create si functia start_thread. Daca este primul thread,
+atunci se face post la semafor(este planificat, primul trebuie sa ruleze fara sa astepte) si se sterge din lista. Altfel, se apeleaza
+so_exec, intrucat trebuie sa se consume timp si sa se actualizeze scheduler->running.
+
+add_in_waiting - adauga in vectorul de waiting normal, ordinea nu conteaza;
+
+so_wait - se marcheaza evenimentul in which_ios, se pune la status WAITING, se adauga in vectorul waiting si se apeleaza
+so_exec, intrucat trebuie sa se consume timp si sa se actualizeze scheduler->running.
+
+so_signal - functia pune inapoi in coada de prioritati threadurile blocate din waiting ce au primit signal de la eventul
+pe care il asteaptau, le sterge din vectorul de waiting si se apeleaza so_exec, intrucat trebuie sa se consume timp
+si sa se actualizeze scheduler->running.
+
+so_end - functia asteapta si executa threadurile din vectorul de threaduri, iar apoi distruge semafoarele si elibereaza
+memoria(elementele schedulerului)
